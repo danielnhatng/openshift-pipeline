@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Pod
+spec:
+  securityContext:
+    runAsUser: 0
+  containers:
+  - name: git
+    image: 10.98.86.97:8082/alpine/git:2.40.1
+    restartPolicy: Never
+    command:
+      - cat
+    tty: true
+  - name: maven
+    image: 10.98.86.97:8082/maven:3.9.4-eclipse-temurin-17-alpine
+    restartPolicy: Never
+    command:
+      - sleep
+    args:
+      - 99d
+    tty: true
+    volumeMounts:
+    - name: task-pv-storage
+      mountPath: /home/jenkins/.m2/repository
+    - name: config-settings
+      mountPath: /home/jenkins/.m2/
+    env:
+    - name: HOME
+      value: /home/jenkins
+    - name: MAVEN_OPTS
+      value: -Duser.home=/home/jenkins
+  - name: kaniko
+    image: 10.98.86.97:8082/kaniko-project/executor:debug
+    restartPolicy: Never
+    command:
+    - sleep
+    args:
+    - 99d
+    volumeMounts:
+    - name: jenkins-docker-cfg
+      mountPath: /kaniko/.docker
+    tty: true
+  - name: helm
+    image: 10.98.86.97:8082/alpine/helm:latest
+    command: 
+    - cat
+    tty: true
+  volumes:
+    - name: config-settings
+      configMap:
+        name: settings-xml
+    - name: jenkins-docker-cfg
+      projected:
+        sources:
+        - secret:
+            name: nhat-credential-nexus
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+    - name: task-pv-storage
+      persistentVolumeClaim:
+        claimName: maven-repo-storage

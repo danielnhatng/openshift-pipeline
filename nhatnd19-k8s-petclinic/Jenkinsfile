@@ -1,0 +1,90 @@
+// @Library(['build', 'test', 'deploy', 'total']) _
+
+podTemplate(cloud: 'openshift', yaml: readTrusted('pod.yaml')) {
+
+    node(POD_LABEL) {
+
+        stage('Check out SCM'){
+            checkout([
+                $class: 'GitSCM',
+                branches: scm.branches,
+                doGenerateSubmoduleConfigurations: scm.doGenerateSubmoduleConfigurations,
+                extensions: scm.extensions,
+                userRemoteConfigs: [[credentialsId: "nhatnd19-gitlab-login", url: "http://10.98.86.96/nhatnd_19/petclinic"]]
+            ])
+        }
+        stage('Compile') {
+            container("maven"){
+                sh "mvn package -Dcheckstyle.skip -DskipTests"
+            }
+        }
+        // stage('Sonar Scan') {
+        //     container("maven"){
+        //         sh "mvn sonar:sonar -Dcheckstyle.skip"
+        //     }
+        // }
+
+        // stage('Unit Test') {
+        //     container("maven"){
+        //         sh "mvn test -Dcheckstyle.skip"
+        //     }
+        // }
+    
+
+        if(env.BRANCH_NAME=='main' || env.BRANCH_NAME.startsWith('uat') || env.BRANCH_NAME.startsWith('dev'))
+        {
+            def branch = "default"
+
+            if(env.BRANCH_NAME=="main"){
+                    branch = "main"
+            }else if(env.BRANCH_NAME.startsWith("dev")){
+                    branch = "dev"
+            }else{
+                    branch = "uat"
+            }
+
+            def image = "10.98.86.97:8085/nhatnd_19/${branch}/pet-clinic"
+            def tag = env.BUILD_NUMBER
+               def stable = 'stable'
+            def appName = "spring-petclinic-nhatnd-petclinic"
+            def namespace = "deploy-${branch}-q"
+            stage('Push image with kaniko'){
+                    container("kaniko"){
+                        sh "/kaniko/executor --context `pwd` --destination ${image}:${tag} --dockerfile ./Dockerfile --skip-tls-verify"
+                    }
+            }
+
+            stage('Deploy app'){
+                    container("helm"){
+                    sh "helm upgrade --install -n deploy-${branch}-nhatnd19 spring-petclinic --set image.tag=${tag} --set image.repository=${image} ./nhatnd-petclinic -f ./nhatnd-petclinic/values.yaml"
+                    }
+            }
+            try {
+                stage('Check health and push healthy to nexus'){
+                    sleep(time:20, unit:"SECONDS")
+                    def response = sh(script: "curl ${appName}.${namespace}.svc.cluster.local:8080/actuator/health" , returnStdout: true).trim()
+                    if (response.contains("UP")){
+                        echo "App is healthy"
+                        stage('Push healthy version to nexus'){
+                            container("kaniko"){
+                                sh "/kaniko/executor --context `pwd` --destination ${image}:${stable} --dockerfile ./Dockerfile --skip-tls-verify"
+                            }
+                        }
+                    }else {
+                        error "App not healthy"
+                    }
+                }
+                
+            }
+            catch(Exception error){
+                stage ('Rollback'){
+                    container("helm"){
+                    // Rollback the deployment
+                    sh "helm upgrade --install -n deploy-${branch}-nhatnd19 spring-petclinic --set image.tag=${stable} --set image.repository=${image} ./nhatnd-petclinic -f ./nhatnd-petclinic/values.yaml"
+                    }
+                }
+                    
+                }
+        }
+    }
+}    

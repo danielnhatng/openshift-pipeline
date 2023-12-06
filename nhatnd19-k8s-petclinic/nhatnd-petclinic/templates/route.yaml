@@ -1,0 +1,10 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-app
+spec:
+  to:
+    kind: Service
+    name: {{ include "nhatnd-petclinic.fullname" . }}
+
+  wildcardPolicy: None
